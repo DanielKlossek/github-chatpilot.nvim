@@ -11,19 +11,16 @@ M.question_win_id = nil
 M.setup = function()
 	vim.api.nvim_create_user_command("GithubChatPilot", "lua require('github-chatpilot').start()", {})
 	vim.keymap.set("n", "<leader>Rgcp", "<cmd>Lazy reload github-chatpilot.nvim<cr>")
-	vim.keymap.set("n", "<leader>gcp", '<cmd>GithubChatPilot<cr>')
+	vim.keymap.set("n", "<leader>gcp", "<cmd>GithubChatPilot<cr>")
 end
 
 M.start = function()
 	vim.api.nvim_buf_set_option(buffer, "modifiable", true)
 	vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {})
-	vim.api.nvim_buf_set_keymap(
-		buffer,
-		"i",
-		"<CR>",
-		"<cmd>lua require('github-chatpilot').handleUserInput(vim.fn.getline('.'))<CR>",
-		{}
-	)
+
+	local right_hand = "<cmd>lua require('github-chatpilot').handleUserInput(vim.fn.getline('.'))<CR>"
+	vim.api.nvim_buf_set_keymap(buffer, "i", "<CR>", right_hand, {})
+	vim.api.nvim_buf_set_keymap(buffer, "n", "<CR>", right_hand, {})
 
 	local win_width = 60
 	local win_height = 1
@@ -45,6 +42,7 @@ end
 
 M.closeQuestionWindow = function()
 	vim.api.nvim_buf_del_keymap(buffer, "i", "<CR>")
+	vim.api.nvim_buf_del_keymap(buffer, "n", "<CR>")
 	vim.cmd("stopinsert")
 
 	if vim.api.nvim_win_is_valid(M.question_win_id) then
