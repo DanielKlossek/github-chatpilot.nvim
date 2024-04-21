@@ -1,79 +1,95 @@
-local buffer = vim.api.nvim_create_buf(false, true)
-vim.api.nvim_buf_set_keymap(buffer, "n", "q", ":q<CR>", {})
-local editor_width = vim.api.nvim_list_uis()[1].width
-local editor_height = vim.api.nvim_list_uis()[1].height
-
 local M = {}
 
-M.answer_win_id = nil
-M.question_win_id = nil
+M.popup_manager = require("simple-popup")
+M.popup_app_id = "github-chatpilot"
+M.queries = {}
 
 M.setup = function()
-	vim.api.nvim_create_user_command("GithubChatPilot", "lua require('github-chatpilot').start()", {})
-	vim.keymap.set("n", "<leader>Rgcp", "<cmd>Lazy reload github-chatpilot.nvim<cr>")
-	vim.keymap.set("n", "<leader>gcp", "<cmd>GithubChatPilot<cr>")
+	vim.api.nvim_create_user_command("GithubChatPilotExplain", "lua require('github-chatpilot').explain()", {})
+	vim.api.nvim_create_user_command("GithubChatPilotHistory", "lua require('github-chatpilot').history()", {})
+	vim.api.nvim_create_user_command(
+		"GithubChatPilotFlushHistory",
+		"lua require('github-chatpilot').flushQueries()",
+		{}
+	)
+	vim.keymap.set("n", "<leader><leader>ghce", "<cmd>Lazy reload github-chatpilot.nvim<cr>")
+	vim.keymap.set("n", "<leader>ghce", "<cmd>GithubChatPilotExplain<cr>")
+	vim.keymap.set("n", "<leader>ghch", "<cmd>GithubChatPilotHistory<cr>")
 end
 
-M.start = function()
-	vim.api.nvim_buf_set_option(buffer, "modifiable", true)
-	vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {})
+M.explain = function()
+	M.popup_manager.deleteAllWindows(M.popup_app_id)
 
-	local right_hand = "<cmd>lua require('github-chatpilot').handleUserInput(vim.fn.getline('.'))<CR>"
-	vim.api.nvim_buf_set_keymap(buffer, "i", "<CR>", right_hand, {})
-	vim.api.nvim_buf_set_keymap(buffer, "n", "<CR>", right_hand, {})
-
-	local win_width = 60
-	local win_height = 1
-
-	M.question_win_id = vim.api.nvim_open_win(buffer, true, {
-		relative = "editor",
-		width = win_width,
-		height = win_height,
-		row = vim.fn.floor((editor_height - win_height) * 0.5),
-		col = vim.fn.floor((editor_width - win_width) * 0.5),
-		style = "minimal",
-		border = "single",
-		title = "How can I help you?",
-		title_pos = "left",
-	})
-
-	vim.cmd("startinsert")
+	M.popup_manager.createPopup(
+		M.popup_app_id,
+		"textbox",
+		"none",
+		"How can I help you?",
+		{ "This is an example input to calculate the length of the input fiels.", "", "", "", "" },
+		"lua",
+		M.handleUserInputKeepQuery
+	)
 end
 
-M.closeQuestionWindow = function()
-	vim.api.nvim_buf_del_keymap(buffer, "i", "<CR>")
-	vim.api.nvim_buf_del_keymap(buffer, "n", "<CR>")
-	vim.cmd("stopinsert")
+M.history = function()
+	M.popup_manager.deleteAllWindows(M.popup_app_id)
 
-	if vim.api.nvim_win_is_valid(M.question_win_id) then
-		vim.api.nvim_win_close(M.question_win_id, true)
+	if M.queries[1] == nil then
+		M.popup_manager.createPopup(
+			M.popup_app_id,
+			"output",
+			"none",
+			"Empty History",
+			{ "Your query history is empty.", "Start doing your first query." }
+		)
+	else
+		M.popup_manager.createPopup(
+			M.popup_app_id,
+			"select",
+			"none",
+			"Query History",
+			M.queries,
+			"lua",
+			M.handleUserInput
+		)
 	end
-
-	M.question_win_id = nil
 end
 
-M.closeAnswerWindow = function()
-	if vim.api.nvim_win_is_valid(M.answer_win_id) then
-		vim.api.nvim_win_close(M.answer_win_id, true)
+M.flushQueries = function()
+	M.queries = {}
+end
+
+M.handleUserInputKeepQuery = function(input)
+	M.handleUserInput(input, true)
+end
+
+---comment
+---@param query string
+M.addQueryToHistory = function(query)
+	for s in query:gmatch("[^\r\n]+") do
+		local line = vim.fn.trim(s)
+		if line ~= "" then
+			table.insert(M.queries, s .. " ...")
+
+			return
+		end
 	end
-
-	M.answer_win_id = nil
 end
 
-M.handleUserInput = function(input)
-	M.closeQuestionWindow()
-
+---comment
+---@param input string
+---@param keep_query any
+M.handleUserInput = function(input, keep_query)
 	if input == nil then
 		return
 	end
 
-	input = vim.fn.trim(input)
-	if input == "" then
-		return
+	if keep_query == true then
+		M.addQueryToHistory(input)
 	end
 
-	local command = '!gh copilot explain "' .. input .. '"'
-	print("running command:", command)
+	local command = "!gh copilot explain " .. input:gsub("([^%w])", "\\%1")
+	print("Copilot is looking for an answer ...")
 
 	local cmd = vim.api.nvim_parse_cmd(command, {})
 	local result = vim.api.nvim_cmd(cmd, { output = true })
@@ -96,41 +112,21 @@ M.handleUserInput = function(input)
 		result = result:gsub("(.-\n)", "", 2)
 	end
 
+	local lines = { "Question:" }
+
+	-- split the input into lines
+	for s in input:gmatch("[^\n]+") do
+		table.insert(lines, "\t" .. s)
+	end
+
 	-- split the result into lines
-	local lines = {}
+	table.insert(lines, "")
+	table.insert(lines, "Answer:")
 	for s in result:gmatch("[^\r\n]+") do
 		table.insert(lines, s)
 	end
 
-	local longest_line = 0
-	for _, line in ipairs(lines) do
-		if #line > longest_line then
-			longest_line = #line
-		end
-	end
-
-	local win_width = longest_line + 10
-	local win_height = #lines
-
-	M.answer_win_id = vim.api.nvim_open_win(buffer, true, {
-		relative = "editor",
-		width = win_width,
-		height = win_height,
-		row = vim.fn.floor((editor_height - win_height) * 0.5),
-		col = vim.fn.floor((editor_width - win_width) * 0.5),
-		style = "minimal",
-		border = "single",
-		title = input,
-	})
-
-	vim.api.nvim_buf_set_option(buffer, "modifiable", true)
-	vim.api.nvim_buf_set_lines(buffer, 0, -1, false, lines)
-	vim.api.nvim_buf_set_option(buffer, "modifiable", false)
-end
-
-M.stop = function()
-	M.closeQuestionWindow()
-	M.closeAnswerWindow()
+	M.popup_manager.createPopup(M.popup_app_id, "output", "none", "", lines, "lua")
 end
 
 return M
